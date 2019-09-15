@@ -1,0 +1,83 @@
+<?php
+define('HOST_NAME',"localhost"); 
+define('PORT',"8090");
+$null = NULL;
+require_once("class.chathandler.php");
+$chatHandler = new ChatHandler();
+
+
+$socket = fsockopen("127.0.0.1","5038", $errno, $errstr, 10);
+if (!$socket){
+     echo "$errstr ($errno)\n";
+	 $soccon = false;
+}else{
+fputs($socket, "action: login\r\n");
+fputs($socket, "username: astm\r\n");
+fputs($socket, "secret: astm\r\n\r\n");
+fputs($socket, "action: Waitevent\r\n");
+$wrets=fgets($socket,128);
+echo $wrets; 
+$soccon = true;
+}
+
+
+$socketResource = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+socket_set_option($socketResource, SOL_SOCKET, SO_REUSEADDR, 1);
+socket_bind($socketResource, 0, PORT);
+socket_listen($socketResource);
+
+$clientSocketArray = array($socketResource);
+while (true) {
+	if($soccon){
+		while(($buffer = fgets($socket,4096)) !== false){ 
+		$arr = explode("\n",$buffer);
+		//$event_data = explode(":",$arr[0]);
+		//$event = str_replace(" ","",$event_data[1]);
+		//if($event == "dial"){
+		echo $arr[0];
+		//}
+		break;}
+	}
+	
+	
+	$newSocketArray = $clientSocketArray;
+	socket_select($newSocketArray, $null, $null, 0, 10);
+	
+	if (in_array($socketResource, $newSocketArray)) {
+		$newSocket = socket_accept($socketResource);
+		$clientSocketArray[] = $newSocket;
+		
+		$header = socket_read($newSocket, 1024);
+		$chatHandler->doHandshake($header, $newSocket, HOST_NAME, PORT);
+		
+		socket_getpeername($newSocket, $client_ip_address);
+		$connectionACK = $chatHandler->newConnectionACK($client_ip_address);
+		
+		$chatHandler->send($connectionACK);
+		
+		$newSocketIndex = array_search($socketResource, $newSocketArray);
+		unset($newSocketArray[$newSocketIndex]);
+	}
+	
+	foreach ($newSocketArray as $newSocketArrayResource) {	
+		while(socket_recv($newSocketArrayResource, $socketData, 1024, 0) >= 1){
+		/*	$socketMessage = $chatHandler->unseal($socketData);*/
+			$messageObj = fromJSON($socketData);
+		    //echo $socketData ;
+			$chat_box_message = $chatHandler->createChatBoxMessage($socketData);
+            //echo $chat_box_message;
+			$chatHandler->send($chat_box_message);
+			break 2;
+		}
+		
+		$socketData = @socket_read($newSocketArrayResource, 1024, PHP_NORMAL_READ);
+		if ($socketData === false) { 
+			socket_getpeername($newSocketArrayResource, $client_ip_address);
+			$connectionACK = $chatHandler->connectionDisconnectACK($client_ip_address);
+			$chatHandler->send($connectionACK);
+			$newSocketIndex = array_search($newSocketArrayResource, $clientSocketArray);
+			unset($clientSocketArray[$newSocketIndex]);			
+		}
+	}
+}
+socket_close($socketResource);
